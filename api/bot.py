@@ -13,15 +13,40 @@ TELEGRAM_BOT_TOKEN = os.environ.get('BOT_TOKEN')
 GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY')
 
 # --- ሰርቪሶችን ማዘጋጀት ---
-bot = telegram.Bot(token=TELEGRAM_BOT_TOKEN)
-genai.configure(api_key=GEMINI_API_KEY)
-model = genai.GenerativeModel('gemini-1.5-flash')
+bot = None
+model = None
+
+# API ቁልፎቹ በትክክል መኖራቸውን ማረጋገጥ
+if TELEGRAM_BOT_TOKEN:
+    bot = telegram.Bot(token=TELEGRAM_BOT_TOKEN)
+else:
+    print("ERROR: BOT_TOKEN environment variable not found.")
+
+if GEMINI_API_KEY:
+    genai.configure(api_key=GEMINI_API_KEY)
+    model = genai.GenerativeModel('gemini-1.5-flash')
+else:
+    print("ERROR: GEMINI_API_KEY environment variable not found.")
 
 # የተጠቃሚውን ሁኔታ መከታተያ
 user_state = {}
 
+def clean_json_from_text(text):
+    """Extracts a JSON object from a string, even if it's embedded in other text."""
+    try:
+        start = text.index('{')
+        end = text.rindex('}') + 1
+        return text[start:end]
+    except ValueError:
+        return None
+
 @app.route('/', methods=['POST'])
 def respond():
+    # ቦቱ ወይም ሞዴሉ ካልተዘጋጀ እንዳይቀጥል ማድረግ
+    if not bot or not model:
+        print("ERROR: Bot or AI Model is not initialized due to missing API keys.")
+        return "ok"
+
     try:
         update = telegram.Update.de_json(request.get_json(force=True), bot)
 
@@ -29,16 +54,12 @@ def respond():
             chat_id = update.message.chat.id
             msg_text = update.message.text.strip()
 
-            # ለ /start ኮማንድ ምላሽ መስጠት
             if msg_text.lower() == '/start':
                 bot.send_message(chat_id=chat_id, text="Welcome to the AI English Learning Bot!\nTo get a new question, type /quiz")
             
-            # ለ /quiz ኮማንድ ምላሽ መስጠት
             elif msg_text.lower() == '/quiz':
-                # ለተጠቃሚው ጥያቄ እየተዘጋጀ መሆኑን ማሳወቅ
                 bot.send_message(chat_id=chat_id, text="Generating a new question from AI... 🧠")
                 
-                # ለ AI የምንልከው ጥያቄ (Prompt)
                 prompt = """
                 Create a simple English quiz question for an Amharic speaker learning English.
                 The question can be about vocabulary, translation, or simple grammar.
@@ -47,27 +68,28 @@ def respond():
                 """
                 
                 try:
-                    # ከ AI ምላሽ መጠበቅ
                     response = model.generate_content(prompt)
                     
-                    # የ AI ምላሽን ወደ JSON መቀየር
-                    quiz_data = json.loads(response.text)
-                    question = quiz_data.get("question")
-                    answer = quiz_data.get("answer")
+                    cleaned_json_str = clean_json_from_text(response.text)
+                    
+                    if cleaned_json_str:
+                        quiz_data = json.loads(cleaned_json_str)
+                        question = quiz_data.get("question")
+                        answer = quiz_data.get("answer")
 
-                    if question and answer:
-                        # ትክክለኛውን መልስ ለዚህ ተጠቃሚ ማስታወሻ መያዝ
-                        user_state[chat_id] = answer
-                        # ጥያቄውን ለተጠቃሚው መላክ
-                        bot.send_message(chat_id=chat_id, text=question)
+                        if question and answer:
+                            user_state[chat_id] = answer
+                            bot.send_message(chat_id=chat_id, text=question)
+                        else:
+                            bot.send_message(chat_id=chat_id, text="Sorry, the AI returned an incomplete response. Please try again.")
                     else:
-                        bot.send_message(chat_id=chat_id, text="Sorry, I couldn't generate a question right now. Please try again.")
+                        print(f"AI returned non-JSON response: {response.text}")
+                        bot.send_message(chat_id=chat_id, text="Sorry, I couldn't understand the AI's response. Please try again.")
 
                 except Exception as ai_error:
                     print(f"AI Error: {ai_error}")
                     bot.send_message(chat_id=chat_id, text="An error occurred with the AI service. Please try again later.")
 
-            # ለሌሎች መልዕክቶች (ለመልሶች) ምላሽ መስጠት
             else:
                 if chat_id in user_state:
                     correct_answer = user_state[chat_id]
@@ -86,9 +108,11 @@ def respond():
 
 @app.route('/setwebhook', methods=['GET', 'POST'])
 def set_webhook():
-    VERCEL_URL = f"https://{request.host}"
-    webhook = bot.set_webhook(f'{VERCEL_URL}/')
-    if webhook:
-        return "Webhook setup ok"
-    else:
-        return "Webhook setup failed"
+    if bot:
+        VERCEL_URL = f"https://{request.host}"
+        webhook = bot.set_webhook(f'{VERCEL_URL}/')
+        if webhook:
+            return "Webhook setup ok"
+        else:
+            return "Webhook setup failed"
+    return "Bot not initialized"
