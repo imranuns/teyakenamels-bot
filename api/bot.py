@@ -4,7 +4,6 @@ import asyncio
 import logging
 import requests
 import google.generativeai as genai
-from google.generativeai.types import Part
 from flask import Flask, request
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes
@@ -130,11 +129,11 @@ async def handle_voice_message(update: Update, context: ContextTypes.DEFAULT_TYP
         def process_voice_data():
             logger.info(f"Processing voice data directly for target language: {target_language}")
             
-            # Create the audio part for the prompt using Part.from_data
-            audio_part = Part.from_data(
-                data=file_content_bytes,
-                mime_type=voice.mime_type
-            )
+            # Create the audio part for the prompt as a dictionary
+            audio_part = {
+                "mime_type": voice.mime_type,
+                "data": file_content_bytes
+            }
 
             # Create the full prompt
             prompt = [
