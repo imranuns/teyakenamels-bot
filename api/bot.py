@@ -4,6 +4,7 @@ import asyncio
 import logging
 import requests
 import google.generativeai as genai
+from google.generativeai.types import Part
 from flask import Flask, request
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes
@@ -32,7 +33,7 @@ pro_model = None
 if GEMINI_API_KEY:
     genai.configure(api_key=GEMINI_API_KEY)
     text_model = genai.GenerativeModel('gemini-1.5-flash')
-    pro_model = genai.GenerativeModel('gemini-1.5-pro-latest') # ለድምጽ ትንተና
+    pro_model = genai.GenerativeModel('gemini-1.5-pro-latest')
 
 # --- Gemini API የትርጉም ተግባራት ---
 def translate_text_with_gemini(text: str, target_language: str) -> str:
@@ -118,7 +119,7 @@ async def handle_voice_message(update: Update, context: ContextTypes.DEFAULT_TYP
     try:
         voice_file = await voice.get_file()
     except Forbidden:
-        logger.warning(f"Forbidden: Bot can't download file from user {user_id}. Likely a forwarded message with privacy settings.")
+        logger.warning(f"Forbidden: Bot can't download file from user {user_id}.")
         await update.message.reply_text("I can't access this voice message. This might be because it was forwarded from a user with privacy settings enabled. Please try recording a new voice message instead.")
         return
 
@@ -129,11 +130,11 @@ async def handle_voice_message(update: Update, context: ContextTypes.DEFAULT_TYP
         def process_voice_data():
             logger.info(f"Processing voice data directly for target language: {target_language}")
             
-            # Create the audio part for the prompt
-            audio_part = {
-                "mime_type": voice.mime_type,
-                "data": file_content_bytes
-            }
+            # Create the audio part for the prompt using Part.from_data
+            audio_part = Part.from_data(
+                data=file_content_bytes,
+                mime_type=voice.mime_type
+            )
 
             # Create the full prompt
             prompt = [
