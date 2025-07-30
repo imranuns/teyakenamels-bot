@@ -95,7 +95,8 @@ async def translate_text_message(update: Update, context: ContextTypes.DEFAULT_T
         await update.message.reply_text("Please select a translation direction from the /menu first.")
         return
 
-    target_language = user_translation_state.pop(user_id)
+    # FIX: Use the state without removing it
+    target_language = user_translation_state[user_id]
     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action='typing')
     
     translated_text = translate_text_with_gemini(text_to_translate, target_language)
@@ -111,7 +112,8 @@ async def handle_voice_message(update: Update, context: ContextTypes.DEFAULT_TYP
         await update.message.reply_text("Voice processing service is not configured.")
         return
 
-    target_language = user_translation_state.pop(user_id)
+    # FIX: Use the state without removing it
+    target_language = user_translation_state[user_id]
     
     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action='typing')
     await update.message.reply_text("Processing your voice message... 🎤")
