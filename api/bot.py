@@ -37,25 +37,25 @@ def translate_text_with_groq(text: str, target_language: str) -> str:
         "Content-Type": "application/json"
     }
 
-    # Using a fast and capable model available on Groq
+    # A more direct and simple prompt to avoid confusion
     payload = {
         "model": "llama3-8b-8192",
         "messages": [
             {
                 "role": "system",
-                "content": "You are a professional and accurate bilingual translator. Your only task is to translate the user's text. Do not add any comments, notes, or explanations. Only provide the translated text."
+                "content": "You are a direct translator. You will be given a text and a target language. Your only job is to provide the translation of that text in the target language. Do not add any extra words, explanations, or formatting."
             },
             {
                 "role": "user",
-                "content": f"Please translate the following text to {target_language}:\n\n---\n{text}\n---"
+                "content": f"Translate to {target_language}: {text}"
             }
         ],
-        "temperature": 0.2, # Lowered for more deterministic and accurate translations
+        "temperature": 0.1, 
     }
 
     try:
         response = requests.post(api_url, headers=headers, json=payload, timeout=30)
-        response.raise_for_status() # Check for HTTP errors (4xx or 5xx)
+        response.raise_for_status() 
         
         result = response.json()
         
