@@ -34,18 +34,33 @@ if GEMINI_API_KEY:
 # --- Gemini API የትርጉም ተግባራት ---
 def translate_text_with_gemini(text: str, target_language: str) -> str:
     if not text_model:
-        return "Text translation service is not configured."
+        logger.error("Gemini text_model is not initialized. Check GEMINI_API_KEY.")
+        return "Text translation service is not configured. The API Key might be missing."
     
     prompt = f"Translate the following text into {target_language}. Provide only the translated text, without any additional explanations or context. Text to translate: {text}"
     
     try:
-        response = text_model.generate_content(prompt)
+        # Add a timeout to the request to prevent long waits
+        response = text_model.generate_content(
+            prompt,
+            request_options={'timeout': 20} # 20 second timeout
+        )
         translated_text = response.text.strip()
         logger.info(f"Successfully translated text '{text}' to '{translated_text}'")
         return translated_text
     except Exception as e:
-        logger.error(f"Text translation failed: {e}")
-        return "An error occurred during text translation."
+        # Log the specific error to Vercel for debugging
+        error_message = str(e)
+        logger.error(f"Gemini API call failed: {error_message}")
+        
+        # Check for common, user-facing errors
+        if "API key not valid" in error_message:
+            return "Translation failed: The API key is not valid. Please check the configuration."
+        elif "Deadline Exceeded" in error_message:
+            return "Translation failed: The request timed out. Please try again."
+        
+        # For other errors, return a generic message
+        return "An error occurred during text translation. The administrator has been notified."
 
 # --- የቴሌግራም ትዕዛዝ እና መልዕክት ተቆጣጣሪዎች ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -73,7 +88,7 @@ async def button_callback_handler(update: Update, context: ContextTypes.DEFAULT_
 
     lang_map = {
         'en_am': {'target': 'am', 'prompt': "You chose English to Amharic. Please send the English text you want to translate."},
-        'am_en': {'target': 'en', 'prompt': "You chose Amharic to English. Please send the Amharic text you want to translate."}
+        'en_am': {'target': 'en', 'prompt': "You chose Amharic to English. Please send the Amharic text you want to translate."}
     }
 
     if data in lang_map:
