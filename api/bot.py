@@ -43,14 +43,14 @@ def translate_text_with_groq(text: str, target_language: str) -> str:
         "messages": [
             {
                 "role": "system",
-                "content": "You are an expert bilingual translator. Your only task is to translate the user's text accurately."
+                "content": "You are a professional and accurate bilingual translator. Your only task is to translate the user's text. Do not add any comments, notes, or explanations. Only provide the translated text."
             },
             {
                 "role": "user",
-                "content": f"Translate the following text into {target_language}. Provide ONLY the translated text as your response, without any extra explanations, introductory phrases, or context. Text to translate: \"{text}\""
+                "content": f"Please translate the following text to {target_language}:\n\n---\n{text}\n---"
             }
         ],
-        "temperature": 0.3,
+        "temperature": 0.2, # Lowered for more deterministic and accurate translations
     }
 
     try:
@@ -61,7 +61,7 @@ def translate_text_with_groq(text: str, target_language: str) -> str:
         
         if result and result.get('choices') and result['choices'][0].get('message'):
             translated_text = result['choices'][0]['message']['content']
-            logger.info(f"Successfully translated text '{text}' to '{translated_text}' using Groq.")
+            logger.info(f"Successfully translated text using Groq.")
             return translated_text.strip()
         else:
             logger.error(f"Groq API call failed: Unexpected response format: {result}")
