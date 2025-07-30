@@ -37,31 +37,31 @@ def translate_text_with_groq(text: str, target_language: str) -> str:
         "Content-Type": "application/json"
     }
 
-    # A more direct and simple prompt to avoid confusion
+    # Using a more powerful model for better accuracy on complex sentences
     payload = {
-        "model": "llama3-8b-8192",
+        "model": "llama3-70b-8192", # Switched to the more capable model
         "messages": [
             {
                 "role": "system",
-                "content": "You are a direct translator. You will be given a text and a target language. Your only job is to provide the translation of that text in the target language. Do not add any extra words, explanations, or formatting."
+                "content": "You are an expert Amharic-English translator. Your only task is to translate the user's text. You must not add any extra comments, notes, or explanations. Only provide the raw translated text."
             },
             {
                 "role": "user",
-                "content": f"Translate to {target_language}: {text}"
+                "content": f"Translate the following text into {target_language}. Text: \"{text}\""
             }
         ],
-        "temperature": 0.1, 
+        "temperature": 0.2,
     }
 
     try:
-        response = requests.post(api_url, headers=headers, json=payload, timeout=30)
+        response = requests.post(api_url, headers=headers, json=payload, timeout=40) # Increased timeout for the larger model
         response.raise_for_status() 
         
         result = response.json()
         
         if result and result.get('choices') and result['choices'][0].get('message'):
             translated_text = result['choices'][0]['message']['content']
-            logger.info(f"Successfully translated text using Groq.")
+            logger.info(f"Successfully translated text using Groq's 70b model.")
             return translated_text.strip()
         else:
             logger.error(f"Groq API call failed: Unexpected response format: {result}")
