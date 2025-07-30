@@ -86,9 +86,10 @@ async def button_callback_handler(update: Update, context: ContextTypes.DEFAULT_
     user_id = query.from_user.id
     data = query.data
 
+    # FIX: Corrected the dictionary keys
     lang_map = {
         'en_am': {'target': 'am', 'prompt': "You chose English to Amharic. Please send the English text you want to translate."},
-        'en_am': {'target': 'en', 'prompt': "You chose Amharic to English. Please send the Amharic text you want to translate."}
+        'am_en': {'target': 'en', 'prompt': "You chose Amharic to English. Please send the Amharic text you want to translate."}
     }
 
     if data in lang_map:
