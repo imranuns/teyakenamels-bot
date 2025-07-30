@@ -3,8 +3,6 @@ import os
 import asyncio
 import logging
 import requests
-import tempfile
-import uuid
 import google.generativeai as genai
 from flask import Flask, request
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -95,7 +93,6 @@ async def translate_text_message(update: Update, context: ContextTypes.DEFAULT_T
         await update.message.reply_text("Please select a translation direction from the /menu first.")
         return
 
-    # FIX: Use the state without removing it
     target_language = user_translation_state[user_id]
     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action='typing')
     
@@ -112,7 +109,6 @@ async def handle_voice_message(update: Update, context: ContextTypes.DEFAULT_TYP
         await update.message.reply_text("Voice processing service is not configured.")
         return
 
-    # FIX: Use the state without removing it
     target_language = user_translation_state[user_id]
     
     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action='typing')
@@ -128,54 +124,32 @@ async def handle_voice_message(update: Update, context: ContextTypes.DEFAULT_TYP
 
     file_content_bytes = await voice_file.download_as_bytearray()
     
-    temp_file_path = ""
     try:
-        # Vercel ላይ ጊዜያዊ ፋይል መፍጠር
-        temp_dir = tempfile.gettempdir()
-        temp_file_path = os.path.join(temp_dir, f"{uuid.uuid4()}.ogg")
-
-        with open(temp_file_path, "wb") as f:
-            f.write(file_content_bytes)
-
         # This is a synchronous call, so we run it in a separate thread
-        def upload_and_process():
-            gemini_file = None
-            try:
-                # 1. Upload file to Gemini
-                logger.info(f"Uploading voice file from path: {temp_file_path}")
-                gemini_file = genai.upload_file(
-                    path=temp_file_path, # Use the file path now
-                    display_name="user_voice_message",
-                    mime_type=voice.mime_type
-                )
-                logger.info(f"Uploaded file '{gemini_file.name}'")
+        def process_voice_data():
+            logger.info(f"Processing voice data directly for target language: {target_language}")
+            
+            # Create the audio part for the prompt
+            audio_part = {
+                "mime_type": voice.mime_type,
+                "data": file_content_bytes
+            }
 
-                # 2. Generate content using the uploaded file
-                prompt = [
-                    f"You are a bilingual translator. First, accurately transcribe the audio file. Then, translate the transcribed text into {target_language}. Provide only the final translated text as the answer, without any other text or labels.",
-                    gemini_file
-                ]
-                logger.info(f"Sending voice prompt to Pro model for target language: {target_language}")
-                response = pro_model.generate_content(prompt)
-                
-                return response.text.strip()
-            finally:
-                # 3. Delete the file from Gemini storage and local temp
-                if gemini_file:
-                    logger.info(f"Deleting file '{gemini_file.name}' from Gemini storage.")
-                    genai.delete_file(gemini_file.name)
+            # Create the full prompt
+            prompt = [
+                f"You are a bilingual translator. First, accurately transcribe the audio data. Then, translate the transcribed text into {target_language}. Provide only the final translated text as the answer, without any other text or labels.",
+                audio_part
+            ]
+            
+            response = pro_model.generate_content(prompt)
+            return response.text.strip()
 
-        translated_text = await asyncio.to_thread(upload_and_process)
+        translated_text = await asyncio.to_thread(process_voice_data)
         await update.message.reply_text(translated_text)
 
     except Exception as e:
         logger.error(f"Error processing voice message: {e}")
         await update.message.reply_text("Sorry, I couldn't process your voice message at this time.")
-    finally:
-        # Clean up the local temporary file
-        if temp_file_path and os.path.exists(temp_file_path):
-            os.remove(temp_file_path)
-            logger.info(f"Cleaned up temporary file: {temp_file_path}")
 
 
 # --- ዋናው የቴሌግራም አፕሊኬሽን ---
