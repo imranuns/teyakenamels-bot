@@ -3,6 +3,7 @@ import os
 import asyncio
 import logging
 import requests
+import google.generativeai as genai
 from flask import Flask, request
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes
@@ -19,61 +20,52 @@ app = Flask(__name__)
 
 # --- API Keys እና ሌሎች ቅንብሮች ---
 TELEGRAM_BOT_TOKEN = os.environ.get('BOT_TOKEN')
-DEEPSEEK_API_KEY = os.environ.get('DEEPSEEK_API_KEY')
+GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY')
 
 # --- የተጠቃሚ ሁኔታ መከታተያ ---
 user_translation_state = {}
 
-# --- DeepSeek API የትርጉም ተግባር ---
-def translate_text_with_deepseek(text: str, target_language: str) -> str:
-    if not DEEPSEEK_API_KEY:
-        logger.error("DEEPSEEK_API_KEY is not set.")
+# --- Gemini AI ሞዴሎችን ማዘጋጀት ---
+text_model = None
+if GEMINI_API_KEY:
+    genai.configure(api_key=GEMINI_API_KEY)
+    text_model = genai.GenerativeModel('gemini-1.5-flash')
+
+# --- Gemini API የትርጉም ተግባራት ---
+def translate_text_with_gemini(text: str, target_language: str) -> str:
+    if not text_model:
+        logger.error("Gemini text_model is not initialized. Check GEMINI_API_KEY.")
         return "Text translation service is not configured. The API Key might be missing."
-
-    api_url = "https://api.deepseek.com/chat/completions"
     
-    headers = {
-        "Content-Type": "application/json",
-        "Authorization": f"Bearer {DEEPSEEK_API_KEY}"
-    }
-
-    payload = {
-        "model": "deepseek-chat",
-        "messages": [
-            {"role": "system", "content": "You are a helpful bilingual translator."},
-            {"role": "user", "content": f"Translate the following text into {target_language}. Provide only the translated text, without any additional explanations or context. Text to translate: {text}"}
-        ]
-    }
-
+    prompt = f"Translate the following text into {target_language}. Provide only the translated text, without any additional explanations or context. Text to translate: {text}"
+    
     try:
-        response = requests.post(api_url, headers=headers, json=payload, timeout=20)
-        response.raise_for_status() # Check for HTTP errors
-        
-        result = response.json()
-        
-        if result and result.get('choices') and result['choices'][0].get('message'):
-            translated_text = result['choices'][0]['message']['content']
-            logger.info(f"Successfully translated text '{text}' to '{translated_text}' using DeepSeek.")
-            return translated_text.strip()
-        else:
-            logger.error(f"DeepSeek API call failed: Unexpected response format: {result}")
-            return "An error occurred: Could not parse the translation."
-
-    except requests.exceptions.HTTPError as http_err:
-        logger.error(f"DeepSeek API call failed with HTTP error: {http_err}")
-        if response.status_code == 401:
-            return "Translation failed: The API key is not valid. Please check the configuration."
-        return f"Translation failed due to a server error ({response.status_code})."
+        response = text_model.generate_content(
+            prompt,
+            request_options={'timeout': 30} # 30 second timeout
+        )
+        translated_text = response.text.strip()
+        logger.info(f"Successfully translated text '{text}' to '{translated_text}'")
+        return translated_text
     except Exception as e:
-        logger.error(f"DeepSeek API call failed with an unexpected error: {e}")
-        return "An unexpected error occurred during translation."
+        error_message = str(e)
+        logger.error(f"Gemini API call failed: {error_message}")
+        
+        if "API key not valid" in error_message:
+            return "Translation failed: The API key is not valid. Please check the configuration."
+        elif "quota" in error_message.lower():
+            return "Translation failed: The daily free usage limit has been reached. Please try again tomorrow."
+        elif "Deadline Exceeded" in error_message:
+            return "Translation failed: The request timed out. Please try again."
+        
+        return "An error occurred during text translation. The administrator has been notified."
 
 # --- የቴሌግራም ትዕዛዝ እና መልዕክት ተቆጣጣሪዎች ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user = update.effective_user
     welcome_message = (
         f"Hello {user.mention_html()}! 👋\n\n"
-        "I am a language translator bot powered by DeepSeek AI.\n\n"
+        "I am a language translator bot powered by Google Gemini.\n\n"
         "Type /menu to see the translation options."
     )
     await update.message.reply_html(welcome_message)
@@ -114,7 +106,7 @@ async def translate_text_message(update: Update, context: ContextTypes.DEFAULT_T
     target_language = user_translation_state[user_id]
     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action='typing')
     
-    translated_text = translate_text_with_deepseek(text_to_translate, target_language)
+    translated_text = translate_text_with_gemini(text_to_translate, target_language)
     await update.message.reply_text(translated_text)
 
 # --- ዋናው የቴሌግራም አፕሊኬሽን ---
