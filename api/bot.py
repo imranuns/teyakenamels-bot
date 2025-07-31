@@ -76,8 +76,8 @@ def translate_text_with_groq(text: str, target_lang: str) -> str:
 # --- የቴሌግራም ትዕዛዝ እና መልዕክት ተቆጣጣሪዎች ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.effective_user.id
-    user_settings.setdefault(user_id, {})['target'] = 'en'
-    user_settings.setdefault(user_id, {})['mode'] = 'translate'
+    if user_id not in user_settings:
+        user_settings[user_id] = {'target': 'en'} # Default settings
     
     await update.message.reply_html(
         "Welcome! I am a powerful translator bot.\n\n"
@@ -171,7 +171,25 @@ async def admin_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     else:
         await update.message.reply_text("You are not authorized to use this command.")
 
-async def admin_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def broadcast_logic(context: ContextTypes.DEFAULT_TYPE, message_text: str = None, photo_id: str = None):
+    """Helper function to perform the broadcast."""
+    all_user_ids = list(user_settings.keys())
+    sent_count, failed_count = 0, 0
+    
+    for chat_id in all_user_ids:
+        try:
+            if photo_id:
+                await context.bot.send_photo(chat_id=chat_id, photo=photo_id, caption=message_text)
+            elif message_text:
+                await context.bot.send_message(chat_id=chat_id, text=message_text)
+            sent_count += 1
+            await asyncio.sleep(0.1) # To avoid hitting rate limits
+        except Exception as e:
+            logger.error(f"Failed to send broadcast to {chat_id}: {e}")
+            failed_count += 1
+    return sent_count, failed_count
+
+async def admin_broadcast_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = str(update.effective_user.id)
     if ADMIN_ID and user_id == ADMIN_ID:
         message_to_send = " ".join(context.args)
@@ -179,20 +197,24 @@ async def admin_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             await update.message.reply_text("Usage: /broadcast <your message>")
             return
         
-        all_user_ids = list(user_settings.keys())
-        await update.message.reply_text(f"Starting broadcast to {len(all_user_ids)} users...")
-        sent_count, failed_count = 0, 0
-        for chat_id in all_user_ids:
-            try:
-                await context.bot.send_message(chat_id=chat_id, text=message_to_send)
-                sent_count += 1
-                await asyncio.sleep(0.1)
-            except Exception as e:
-                logger.error(f"Failed to send broadcast to {chat_id}: {e}")
-                failed_count += 1
-        await update.message.reply_text(f"📢 Broadcast finished!\n\nSent: {sent_count}\nFailed: {failed_count}")
+        await update.message.reply_text(f"Starting text broadcast to {len(user_settings)} users...")
+        sent, failed = await broadcast_logic(context, message_text=message_to_send)
+        await update.message.reply_text(f"📢 Text Broadcast finished!\n\nSent: {sent}\nFailed: {failed}")
     else:
         await update.message.reply_text("You are not authorized to use this command.")
+
+async def admin_broadcast_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user_id = str(update.effective_user.id)
+    if ADMIN_ID and user_id == ADMIN_ID:
+        if not update.message.caption or not update.message.caption.startswith("/broadcast"):
+            return # Ignore photos without the broadcast command
+
+        message_to_send = update.message.caption.replace("/broadcast", "").strip()
+        photo_id = update.message.photo[-1].file_id
+        
+        await update.message.reply_text(f"Starting photo broadcast to {len(user_settings)} users...")
+        sent, failed = await broadcast_logic(context, message_text=message_to_send, photo_id=photo_id)
+        await update.message.reply_text(f"🖼️ Photo Broadcast finished!\n\nSent: {sent}\nFailed: {failed}")
 
 async def handle_admin_reply(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if update.message.reply_to_message and update.message.reply_to_message.forward_from:
@@ -207,10 +229,12 @@ application.add_handler(CommandHandler("start", start))
 application.add_handler(CommandHandler("set", set_language))
 application.add_handler(CommandHandler("support", support))
 application.add_handler(CommandHandler("status", admin_status))
-application.add_handler(CommandHandler("broadcast", admin_broadcast))
+application.add_handler(CommandHandler("broadcast", admin_broadcast_text))
 application.add_handler(CallbackQueryHandler(button_callback_handler))
-# Admin reply handler must come before the general text handler
+# Admin handlers
 application.add_handler(MessageHandler(filters.REPLY & filters.User(user_id=int(ADMIN_ID)) if ADMIN_ID else filters.NONE, handle_admin_reply))
+application.add_handler(MessageHandler(filters.PHOTO & filters.User(user_id=int(ADMIN_ID)) if ADMIN_ID else filters.NONE, admin_broadcast_photo))
+# General text handler (must be last)
 application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text_message))
 
 # --- ከ Vercel ጋር የሚያገናኙ ተግባራት ---
