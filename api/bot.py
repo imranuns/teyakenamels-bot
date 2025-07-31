@@ -47,7 +47,7 @@ LANGUAGES = {
 SORTED_LANG_CODES = sorted(LANGUAGES.keys(), key=lambda k: LANGUAGES[k])
 
 # --- የተጠቃሚ ሁኔታ መከታተያ ---
-user_settings = {} # Stores {'target': 'en'}
+user_settings = {} # Stores {'target': 'en', 'mode': 'translate'}
 
 # --- Groq API የትርጉም ተግባር ---
 def translate_text_with_groq(text: str, target_lang: str) -> str:
@@ -60,11 +60,7 @@ def translate_text_with_groq(text: str, target_lang: str) -> str:
     system_prompt = f"You are an expert translator. Your task is to auto-detect the source language of the user's text and translate it to {target_language_name}. Provide only the translated text."
     user_prompt = f"Translate the following text to {target_language_name}: \"{text}\""
 
-    payload = {
-        "model": "llama3-70b-8192",
-        "messages": [{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}],
-        "temperature": 0.2
-    }
+    payload = {"model": "llama3-70b-8192", "messages": [{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}], "temperature": 0.2}
 
     try:
         response = requests.post(api_url, headers=headers, json=payload, timeout=40)
@@ -80,13 +76,14 @@ def translate_text_with_groq(text: str, target_lang: str) -> str:
 # --- የቴሌግራም ትዕዛዝ እና መልዕክት ተቆጣጣሪዎች ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.effective_user.id
-    if user_id not in user_settings:
-        user_settings[user_id] = {'target': 'en'} # Default settings
+    user_settings.setdefault(user_id, {})['target'] = 'en'
+    user_settings.setdefault(user_id, {})['mode'] = 'translate'
     
     await update.message.reply_html(
         "Welcome! I am a powerful translator bot.\n\n"
         "I will automatically detect the language of your text and translate it to <b>English</b> by default.\n"
-        "To change the target language, use the /set command."
+        "To change the target language, use the /set command.\n"
+        "For help, use the /support command."
     )
 
 async def set_language(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -94,24 +91,19 @@ async def set_language(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     await update.message.reply_text("Please select the target language (the language to translate TO):", reply_markup=keyboard)
 
 def create_language_keyboard(page: int, action: str) -> InlineKeyboardMarkup:
-    buttons = []
-    items_per_page = 20
-    start_index = page * items_per_page
-    end_index = start_index + items_per_page
+    buttons, items_per_page = [], 20
+    start_index, end_index = page * items_per_page, (page + 1) * items_per_page
     page_langs = SORTED_LANG_CODES[start_index:end_index]
 
     for i in range(0, len(page_langs), 2):
-        row = []
-        row.append(InlineKeyboardButton(f"{LANGUAGES[page_langs[i]]}", callback_data=f"{action}_{page_langs[i]}"))
+        row = [InlineKeyboardButton(f"{LANGUAGES[page_langs[i]]}", callback_data=f"{action}_{page_langs[i]}")]
         if i + 1 < len(page_langs):
             row.append(InlineKeyboardButton(f"{LANGUAGES[page_langs[i+1]]}", callback_data=f"{action}_{page_langs[i+1]}"))
         buttons.append(row)
 
     nav_row = []
-    if page > 0:
-        nav_row.append(InlineKeyboardButton("⬅️ Previous", callback_data=f"page_{action}_{page-1}"))
-    if end_index < len(SORTED_LANG_CODES):
-        nav_row.append(InlineKeyboardButton("Next ➡️", callback_data=f"page_{action}_{page+1}"))
+    if page > 0: nav_row.append(InlineKeyboardButton("⬅️ Previous", callback_data=f"page_{action}_{page-1}"))
+    if end_index < len(SORTED_LANG_CODES): nav_row.append(InlineKeyboardButton("Next ➡️", callback_data=f"page_{action}_{page+1}"))
     buttons.append(nav_row)
     
     return InlineKeyboardMarkup(buttons)
@@ -130,39 +122,52 @@ async def button_callback_handler(update: Update, context: ContextTypes.DEFAULT_
 
     elif data.startswith('target_'):
         action, lang_code = data.split('_', 1)
-        if user_id not in user_settings: user_settings[user_id] = {}
-        user_settings[user_id][action] = lang_code
-        
+        user_settings.setdefault(user_id, {})[action] = lang_code
         target = user_settings[user_id].get('target', 'en')
         await query.edit_message_text(
-            f"Settings updated!\n\n"
-            f"I will now translate everything TO: <b>{LANGUAGES.get(target, target)}</b>.\n\n"
-            "You can now send text to translate.",
+            f"Settings updated!\n\nI will now translate everything TO: <b>{LANGUAGES.get(target, target)}</b>.\n\nYou can now send text to translate.",
             parse_mode='HTML'
         )
+    elif data == 'cancel_support':
+        user_settings.setdefault(user_id, {})['mode'] = 'translate'
+        await query.edit_message_text("Support session cancelled. You are now back in translation mode.")
 
-async def translate_text_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def handle_text_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.effective_user.id
-    if user_id not in user_settings:
-        await start(update, context)
-        return
+    if user_id not in user_settings: await start(update, context)
 
-    settings = user_settings[user_id]
-    target_lang = settings.get('target', 'en')
+    mode = user_settings.get(user_id, {}).get('mode', 'translate')
+
+    if mode == 'support':
+        if not ADMIN_ID:
+            await update.message.reply_text("Support system is not configured by the admin.")
+            return
+        await context.bot.forward_message(chat_id=ADMIN_ID, from_chat_id=user_id, message_id=update.message.message_id)
+        await update.message.reply_text("Your message has been sent to the administrator. They will reply to you here.")
     
-    await context.bot.send_chat_action(chat_id=update.effective_chat.id, action='typing')
-    translated_text = translate_text_with_groq(update.message.text, 'auto', target_lang)
-    await update.message.reply_text(translated_text)
+    else: # mode == 'translate'
+        settings = user_settings[user_id]
+        target_lang = settings.get('target', 'en')
+        await context.bot.send_chat_action(chat_id=update.effective_chat.id, action='typing')
+        translated_text = translate_text_with_groq(update.message.text, 'auto', target_lang)
+        await update.message.reply_text(translated_text)
     
 async def support(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    await update.message.reply_html("For support, please contact the admin: @YourUsername") # Replace with your username
+    user_id = update.effective_user.id
+    user_settings.setdefault(user_id, {})['mode'] = 'support'
+    keyboard = [[InlineKeyboardButton("🚫 Cancel", callback_data='cancel_support')]]
+    await update.message.reply_html(
+        "📞 You are now in direct contact with our Administrator.\n"
+        "Send here any message you want to submit, you will receive the answer directly here in chat!",
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
 
 # --- Admin Commands ---
 async def admin_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = str(update.effective_user.id)
     if ADMIN_ID and user_id == ADMIN_ID:
         user_count = len(user_settings)
-        await update.message.reply_text(f"📊 Bot Status:\n\nActive users (who have used the bot recently): {user_count}")
+        await update.message.reply_text(f"📊 Bot Status:\n\nTotal unique users: {user_count}")
     else:
         await update.message.reply_text("You are not authorized to use this command.")
 
@@ -171,27 +176,29 @@ async def admin_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     if ADMIN_ID and user_id == ADMIN_ID:
         message_to_send = " ".join(context.args)
         if not message_to_send:
-            await update.message.reply_text("Please provide a message to broadcast. Usage: /broadcast <your message>")
+            await update.message.reply_text("Usage: /broadcast <your message>")
             return
-
-        sent_count = 0
-        failed_count = 0
-        all_user_ids = list(user_settings.keys())
         
+        all_user_ids = list(user_settings.keys())
         await update.message.reply_text(f"Starting broadcast to {len(all_user_ids)} users...")
-
+        sent_count, failed_count = 0, 0
         for chat_id in all_user_ids:
             try:
                 await context.bot.send_message(chat_id=chat_id, text=message_to_send)
                 sent_count += 1
-                await asyncio.sleep(0.1) # To avoid hitting rate limits
+                await asyncio.sleep(0.1)
             except Exception as e:
                 logger.error(f"Failed to send broadcast to {chat_id}: {e}")
                 failed_count += 1
-        
         await update.message.reply_text(f"📢 Broadcast finished!\n\nSent: {sent_count}\nFailed: {failed_count}")
     else:
         await update.message.reply_text("You are not authorized to use this command.")
+
+async def handle_admin_reply(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if update.message.reply_to_message and update.message.reply_to_message.forward_from:
+        original_user_id = update.message.reply_to_message.forward_from.id
+        await context.bot.send_message(chat_id=original_user_id, text=f"<b>Admin Reply:</b>\n{update.message.text}", parse_mode='HTML')
+        await update.message.reply_text("Your reply has been sent to the user.")
 
 # --- ዋናው የቴሌግራም አፕሊኬሽን ---
 if not TELEGRAM_BOT_TOKEN: raise ValueError("BOT_TOKEN is not set!")
@@ -202,7 +209,9 @@ application.add_handler(CommandHandler("support", support))
 application.add_handler(CommandHandler("status", admin_status))
 application.add_handler(CommandHandler("broadcast", admin_broadcast))
 application.add_handler(CallbackQueryHandler(button_callback_handler))
-application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, translate_text_message))
+# Admin reply handler must come before the general text handler
+application.add_handler(MessageHandler(filters.REPLY & filters.User(user_id=int(ADMIN_ID)) if ADMIN_ID else filters.NONE, handle_admin_reply))
+application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text_message))
 
 # --- ከ Vercel ጋር የሚያገናኙ ተግባራት ---
 @app.route('/', methods=['POST'])
